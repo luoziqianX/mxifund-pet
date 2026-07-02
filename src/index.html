@@ -129,6 +129,28 @@
     color: #fff;
   }
 
+  /* HUD 操作反馈（自带位置，不跟随小人） */
+  #toast {
+    position: absolute;
+    left: 50%;
+    top: 44px;
+    transform: translateX(-50%) translateY(-6px);
+    padding: 6px 14px;
+    background: var(--panel-bg);
+    border: 1px solid rgba(75, 225, 255, 0.5);
+    border-radius: 99px;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: #d8f4ff;
+    box-shadow: 0 4px 16px rgba(35, 60, 120, 0.4);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .2s ease, transform .25s ease;
+    white-space: nowrap;
+    z-index: 30;
+  }
+  #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
   /* ---------- 查询全息面板 ---------- */
   #holo {
     position: absolute;
@@ -292,9 +314,11 @@
       <button id="btn-skip" title="快进本阶段">⏩</button>
       <button id="btn-query" title="立刻查询战况">🛰</button>
       <button id="btn-autostart" title="开机启动">🚀</button>
+      <button id="btn-shortcut" title="创建桌面快捷方式">📌</button>
       <button id="btn-hide" title="隐藏桌宠（点悬浮球或 Ctrl+Alt+H 召回）">🫥</button>
       <button class="quit" id="btn-quit" title="下班（退出）">✕</button>
     </div>
+    <div id="toast"></div>
 
     <div id="bubble"></div>
 

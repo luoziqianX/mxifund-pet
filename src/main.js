@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, screen, globalShortcut } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, globalShortcut, shell } = require('electron');
 const path = require('path');
 
 let win = null;
@@ -51,7 +51,9 @@ function createWindow() {
   win.setIgnoreMouseEvents(true, { forward: true });
 
   placeWindow();
-  win.loadFile(path.join(__dirname, 'index.html'));
+  win.loadFile(path.join(__dirname, 'index.html'), {
+    query: process.argv.includes('--diag') ? { diag: '1' } : {},
+  });
 
   if (process.argv.includes('--devtools')) {
     win.webContents.openDevTools({ mode: 'detach' });
@@ -110,6 +112,12 @@ function showPet() {
   if (!win || win.isVisible()) return;
   placeWindow();
   win.show();
+  win.setAlwaysOnTop(true, 'screen-saver');
+  // Windows 上 hide/show 之后 forward:true 的鼠标转发会失效，必须重挂，
+  // 否则 renderer 收不到 mousemove，HUD/小人永远无法恢复交互
+  win.setIgnoreMouseEvents(true, { forward: true });
+  // 让 renderer 把本地 interactive 状态复位，与主进程保持一致
+  win.webContents.send('pet:restored');
   ball?.hide();
 }
 
@@ -126,6 +134,15 @@ function setAutostart(on) {
   app.setLoginItemSettings({ ...loginArgs(), openAtLogin: !!on });
 }
 
+// ---------- 桌面快捷方式 ----------
+function createDesktopShortcut() {
+  const lnk = path.join(app.getPath('desktop'), 'mxifund桌宠.lnk');
+  const opts = app.isPackaged
+    ? { target: process.execPath, cwd: path.dirname(process.execPath) }
+    : { target: process.execPath, args: `"${app.getAppPath()}"`, cwd: app.getAppPath() };
+  return shell.writeShortcutLink(lnk, 'create', { ...opts, description: 'mxifund 干凯读桌宠' });
+}
+
 app.whenReady().then(() => {
   createWindow();
   createBall();
@@ -136,6 +153,22 @@ app.whenReady().then(() => {
   globalShortcut.register('Control+Alt+H', () => {
     if (win?.isVisible()) hidePet(); else showPet();
   });
+
+  // 悬停检测不依赖 setIgnoreMouseEvents 的 forward 转发——
+  // 那个实现基于 Win32 低级鼠标钩子，主进程繁忙时会被系统摘除且不再恢复
+  // （表现为隐藏/召回等重操作后 HUD 再也点不动）。
+  // 改为主进程轮询光标推给 renderer 做命中检测，稳定可靠。
+  let wasInside = false;
+  setInterval(() => {
+    if (!win || win.isDestroyed() || !win.isVisible()) return;
+    const p = screen.getCursorScreenPoint();
+    const b = win.getBounds();
+    const x = p.x - b.x, y = p.y - b.y;
+    const inside = x >= 0 && y >= 0 && x < b.width && y < b.height;
+    if (inside) win.webContents.send('pet:cursor', x, y);
+    else if (wasInside) win.webContents.send('pet:cursor', -1, -1);
+    wasInside = inside;
+  }, 70);
 
   // ---- 自动化测试钩子 ----
   if (process.argv.includes('--test-ball')) {
@@ -161,6 +194,47 @@ app.whenReady().then(() => {
       app.quit();
     }, 1500);
   }
+  // 在渲染进程里真点一遍 HUD 按钮，验证 点击→IPC→注册表/快捷方式 全链路
+  if (process.argv.includes('--test-hud')) {
+    setTimeout(async () => {
+      const clickBtn = id => win.webContents.executeJavaScript(
+        `(async () => {
+          document.getElementById('${id}').click();
+          await new Promise(r => setTimeout(r, 500));
+          return {
+            cls: document.getElementById('${id}').className,
+            toast: document.getElementById('toast')?.textContent ?? '',
+          };
+        })()`
+      );
+      console.log('HUD_AUTO_ON', JSON.stringify(await clickBtn('btn-autostart')), 'reg=' + getAutostart());
+      console.log('HUD_AUTO_OFF', JSON.stringify(await clickBtn('btn-autostart')), 'reg=' + getAutostart());
+      console.log('HUD_PIN', JSON.stringify(await clickBtn('btn-shortcut')));
+      app.quit();
+    }, 3500);
+  }
+  // 常驻运行，周期打印 HUD 按钮屏幕坐标（状态文字变宽会挪动按钮），供鼠标注入测试
+  if (process.argv.includes('--log-hud-rect')) {
+    setInterval(async () => {
+      if (!win || win.isDestroyed()) return;
+      const rects = await win.webContents.executeJavaScript(
+        `(() => {
+          if (!window.__instr) {
+            window.__instr = 1;
+            for (const id of ['btn-autostart', 'btn-shortcut', 'btn-hide']) {
+              document.getElementById(id).addEventListener('click', () => console.warn('CLICKED ' + id), { capture: true });
+            }
+            window.petAPI.onRestored(() => console.warn('RENDERER_GOT_RESTORED'));
+          }
+          return JSON.stringify(Object.fromEntries(['btn-autostart','btn-shortcut','btn-hide'].map(id => {
+            const r = document.getElementById(id).getBoundingClientRect();
+            return [id, { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) }];
+          })));
+        })()`
+      ).catch(() => null);
+      if (rects) console.log('HUD_RECT', rects, 'WIN', JSON.stringify(win.getBounds()));
+    }, 2000);
+  }
 });
 
 // 二次启动（如开机自启后手动再开）：唤醒已有实例
@@ -171,12 +245,17 @@ app.on('will-quit', () => globalShortcut.unregisterAll());
 ipcMain.on('pet:set-interactive', (_e, interactive) => {
   if (!win) return;
   win.setIgnoreMouseEvents(!interactive, { forward: true });
+  if (process.argv.includes('--log-hud-rect')) console.log('SET_INTERACTIVE', interactive);
 });
 
-ipcMain.on('pet:hide', hidePet);
+ipcMain.on('pet:hide', () => {
+  if (process.argv.includes('--diag')) console.log('MAIN_GOT_HIDE');
+  hidePet();
+});
 ipcMain.on('pet:quit', () => app.quit());
 ipcMain.handle('pet:get-autostart', () => getAutostart());
 ipcMain.on('pet:set-autostart', (_e, on) => setAutostart(on));
+ipcMain.handle('pet:make-shortcut', () => createDesktopShortcut());
 
 // 悬浮球：拖动（renderer 传屏幕坐标）与点击召回
 ipcMain.on('ball:move', (_e, x, y) => {

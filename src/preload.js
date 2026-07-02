@@ -16,6 +16,15 @@ contextBridge.exposeInMainWorld('petAPI', {
   setAutostart(on) {
     ipcRenderer.send('pet:set-autostart', !!on);
   },
+  makeShortcut() {
+    return ipcRenderer.invoke('pet:make-shortcut');
+  },
+  onRestored(cb) {
+    ipcRenderer.on('pet:restored', () => cb());
+  },
+  onCursor(cb) {
+    ipcRenderer.on('pet:cursor', (_e, x, y) => cb(x, y));
+  },
   // ---- 悬浮球专用 ----
   ballMove(x, y) {
     ipcRenderer.send('ball:move', x, y);

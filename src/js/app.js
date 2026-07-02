@@ -391,17 +391,37 @@ function pickChar(ev) {
   return raycaster.intersectObject(char.hitProxy, false).length > 0;
 }
 
-window.addEventListener('mousemove', ev => {
-  const el = document.elementFromPoint(ev.clientX, ev.clientY);
+function updateHover(cx, cy) {
+  const el = cx >= 0 ? document.elementFromPoint(cx, cy) : null;
   const overHud = !!el?.closest?.('#hud');
-  const overChar = pickChar(ev);
+  const overChar = cx >= 0 && pickChar({ clientX: cx, clientY: cy });
   const next = overHud || overChar;
   document.body.style.cursor = overChar ? 'pointer' : 'default';
   if (next !== interactive) {
     interactive = next;
     window.petAPI?.setInteractive(next);
   }
-});
+}
+
+// 两个来源喂同一套命中检测：
+// 1) 主进程光标轮询（穿透状态下唯一可靠的来源）
+// 2) 窗口自身 mousemove（交互态下的即时响应）
+window.petAPI?.onCursor?.(updateHover);
+window.addEventListener('mousemove', ev => updateHover(ev.clientX, ev.clientY));
+
+// 隐藏后恢复时主进程会重置鼠标穿透，本地状态必须跟着复位，
+// 否则 interactive 卡在 true，悬停 HUD 不会再发开启交互的指令
+window.petAPI?.onRestored?.(() => { interactive = false; });
+
+// 诊断模式（?diag=1）：把每次鼠标事件的落点/目标/穿透状态转发到主进程日志
+if (new URLSearchParams(location.search).has('diag')) {
+  for (const type of ['mousedown', 'mouseup', 'click']) {
+    window.addEventListener(type, ev => {
+      const el = ev.target;
+      console.warn(`DIAG ${type} @${ev.clientX},${ev.clientY} target=${el.id || el.tagName} interactive=${interactive}`);
+    }, { capture: true });
+  }
+}
 
 window.addEventListener('mousedown', ev => {
   if (!pickChar(ev)) return;
@@ -430,27 +450,52 @@ $('btn-quit').addEventListener('click', () => {
   if (isElectron) window.petAPI.quit();
   else say('预览模式没法退出啦');
 });
+// HUD 操作反馈：固定显示在按钮正下方，不会被小人的碎碎念顶掉
+const toastEl = document.getElementById('toast');
+let toastTimer = 0;
+function toast(text) {
+  toastEl.textContent = text;
+  toastEl.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toastEl.classList.remove('show'), 2600);
+}
 // 一键隐藏：桌宠缩进悬浮球，点球或 Ctrl+Alt+H 召回
 $('btn-hide').addEventListener('click', () => {
   if (isElectron) window.petAPI.hide();
-  else say('预览模式没有悬浮球哦');
+  else toast('预览模式没有悬浮球哦');
 });
-// 开机启动开关
+// 开机启动开关：本地乐观切换（点击瞬间就有反馈），后台写注册表并回读校准
 const btnAuto = $('btn-autostart');
+let autoOn = false;
+function paintAutostart() {
+  btnAuto.classList.toggle('on', autoOn);
+  btnAuto.title = autoOn ? '开机启动：已开启（点击关闭）' : '开机启动：已关闭（点击开启）';
+}
 async function refreshAutostart() {
   if (!isElectron) return;
-  const on = await window.petAPI.getAutostart();
-  btnAuto.classList.toggle('on', on);
-  btnAuto.title = on ? '开机启动：已开启（点击关闭）' : '开机启动：已关闭（点击开启）';
+  autoOn = await window.petAPI.getAutostart();
+  paintAutostart();
 }
-btnAuto.addEventListener('click', async () => {
-  if (!isElectron) { say('预览模式改不了开机启动'); return; }
-  const on = await window.petAPI.getAutostart();
-  window.petAPI.setAutostart(!on);
-  say(on ? '开机启动已关闭' : '好耶！以后开机我自动来上班！');
-  refreshAutostart();
+btnAuto.addEventListener('click', () => {
+  if (!isElectron) { toast('预览模式改不了开机启动'); return; }
+  autoOn = !autoOn;
+  window.petAPI.setAutostart(autoOn);
+  paintAutostart();
+  toast(autoOn ? '🚀 开机启动已开启，以后开机自动来上班！' : '开机启动已关闭');
+  refreshAutostart().catch(e => console.error('回读开机启动状态失败', e));
 });
-refreshAutostart();
+refreshAutostart().catch(e => console.error('读取开机启动状态失败', e));
+// 一键桌面快捷方式
+$('btn-shortcut').addEventListener('click', async () => {
+  if (!isElectron) { toast('预览模式创建不了快捷方式'); return; }
+  try {
+    const ok = await window.petAPI.makeShortcut();
+    toast(ok ? '📌 已钉到桌面！双击图标随时叫我' : '呜…快捷方式创建失败了');
+  } catch (e) {
+    console.error('创建快捷方式失败', e);
+    toast('呜…快捷方式创建失败了');
+  }
+});
 // 轮回按钮（干翻凯读后出现）
 const rebirth = document.createElement('button');
 rebirth.id = 'btn-rebirth';
