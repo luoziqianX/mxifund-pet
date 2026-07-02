@@ -430,6 +430,27 @@ $('btn-quit').addEventListener('click', () => {
   if (isElectron) window.petAPI.quit();
   else say('预览模式没法退出啦');
 });
+// 一键隐藏：桌宠缩进悬浮球，点球或 Ctrl+Alt+H 召回
+$('btn-hide').addEventListener('click', () => {
+  if (isElectron) window.petAPI.hide();
+  else say('预览模式没有悬浮球哦');
+});
+// 开机启动开关
+const btnAuto = $('btn-autostart');
+async function refreshAutostart() {
+  if (!isElectron) return;
+  const on = await window.petAPI.getAutostart();
+  btnAuto.classList.toggle('on', on);
+  btnAuto.title = on ? '开机启动：已开启（点击关闭）' : '开机启动：已关闭（点击开启）';
+}
+btnAuto.addEventListener('click', async () => {
+  if (!isElectron) { say('预览模式改不了开机启动'); return; }
+  const on = await window.petAPI.getAutostart();
+  window.petAPI.setAutostart(!on);
+  say(on ? '开机启动已关闭' : '好耶！以后开机我自动来上班！');
+  refreshAutostart();
+});
+refreshAutostart();
 // 轮回按钮（干翻凯读后出现）
 const rebirth = document.createElement('button');
 rebirth.id = 'btn-rebirth';

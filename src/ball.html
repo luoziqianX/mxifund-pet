@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<title>pet-ball</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; user-select: none; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: transparent; }
+  body { display: grid; place-items: center; }
+
+  #ball {
+    position: relative;
+    width: 52px; height: 52px;
+    border-radius: 50%;
+    background:
+      radial-gradient(circle at 32% 26%, rgba(255,255,255,0.95) 0 5%, rgba(255,255,255,0) 24%),
+      linear-gradient(135deg, #ffb6d9 0%, #b18cff 58%, #4be1ff 100%);
+    box-shadow: 0 3px 9px rgba(120, 90, 200, 0.45), inset 0 -5px 9px rgba(255, 255, 255, 0.30);
+    cursor: grab;
+    animation: bob 3.2s ease-in-out infinite;
+    transition: transform .18s ease;
+  }
+  #ball:hover { transform: scale(1.12); }
+  #ball.dragging { cursor: grabbing; animation: none; transform: scale(1.06); }
+  @keyframes bob { 0%,100% { translate: 0 -2px; } 50% { translate: 0 2px; } }
+
+  /* 睡颜：闭眼微笑 + 腮红 */
+  .eye {
+    position: absolute; top: 22px;
+    width: 9px; height: 5px;
+    border-bottom: 2.2px solid #5a3a6a;
+    border-radius: 0 0 9px 9px;
+  }
+  .eye.l { left: 12px; } .eye.r { right: 12px; }
+  .blush {
+    position: absolute; top: 29px;
+    width: 8px; height: 4.5px; border-radius: 50%;
+    background: rgba(255, 120, 170, 0.55);
+  }
+  .blush.l { left: 8px; } .blush.r { right: 8px; }
+  .mouth {
+    position: absolute; left: 50%; top: 31px;
+    width: 7px; height: 4px; translate: -50% 0;
+    border-bottom: 2px solid #5a3a6a;
+    border-radius: 0 0 8px 8px;
+  }
+  /* 呼吸光环 */
+  #ring {
+    position: absolute; inset: -5px;
+    border-radius: 50%;
+    border: 2px solid rgba(255, 182, 217, 0.65);
+    animation: pulse 2.6s ease-out infinite;
+    pointer-events: none;
+  }
+  @keyframes pulse {
+    0% { opacity: .8; scale: 0.9; }
+    70% { opacity: 0; scale: 1.25; }
+    100% { opacity: 0; scale: 1.25; }
+  }
+</style>
+</head>
+<body>
+  <div id="ball" title="点我召回桌宠（可拖动｜Ctrl+Alt+H）">
+    <div id="ring"></div>
+    <i class="eye l"></i><i class="eye r"></i>
+    <b class="blush l"></b><b class="blush r"></b>
+    <s class="mouth"></s>
+  </div>
+
+<script>
+  // 拖动：pointer capture 跟随鼠标移动窗口；位移极小视为点击 => 召回桌宠
+  const ball = document.getElementById('ball');
+  const KEY = 'mxpet-ball-pos';
+
+  // 恢复上次拖放的位置
+  try {
+    const saved = JSON.parse(localStorage.getItem(KEY));
+    if (saved && Number.isFinite(saved.x)) window.petAPI.ballMove(saved.x, saved.y);
+  } catch { /* 首次启动无记录 */ }
+
+  let drag = null;
+  ball.addEventListener('pointerdown', ev => {
+    drag = {
+      offX: ev.screenX - window.screenX,
+      offY: ev.screenY - window.screenY,
+      startX: ev.screenX, startY: ev.screenY,
+      moved: false,
+    };
+    ball.setPointerCapture(ev.pointerId);
+    ball.classList.add('dragging');
+  });
+  ball.addEventListener('pointermove', ev => {
+    if (!drag) return;
+    if (Math.hypot(ev.screenX - drag.startX, ev.screenY - drag.startY) > 4) drag.moved = true;
+    if (drag.moved) window.petAPI.ballMove(ev.screenX - drag.offX, ev.screenY - drag.offY);
+  });
+  ball.addEventListener('pointerup', ev => {
+    if (!drag) return;
+    ball.classList.remove('dragging');
+    if (drag.moved) {
+      localStorage.setItem(KEY, JSON.stringify({ x: window.screenX, y: window.screenY }));
+    } else {
+      window.petAPI.ballRestore();
+    }
+    drag = null;
+  });
+</script>
+</body>
+</html>

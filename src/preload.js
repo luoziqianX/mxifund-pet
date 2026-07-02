@@ -7,4 +7,20 @@ contextBridge.exposeInMainWorld('petAPI', {
   quit() {
     ipcRenderer.send('pet:quit');
   },
+  hide() {
+    ipcRenderer.send('pet:hide');
+  },
+  getAutostart() {
+    return ipcRenderer.invoke('pet:get-autostart');
+  },
+  setAutostart(on) {
+    ipcRenderer.send('pet:set-autostart', !!on);
+  },
+  // ---- 悬浮球专用 ----
+  ballMove(x, y) {
+    ipcRenderer.send('ball:move', x, y);
+  },
+  ballRestore() {
+    ipcRenderer.send('ball:restore');
+  },
 });

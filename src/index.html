@@ -123,6 +123,11 @@
   }
   #hud button:hover { background: rgba(75,225,255,0.18); color: #fff; transform: scale(1.12); }
   #hud button.quit:hover { background: rgba(255,90,120,0.25); color: #ff8fa5; }
+  #hud button.on {
+    background: rgba(75, 225, 255, 0.22);
+    box-shadow: 0 0 7px rgba(75, 225, 255, 0.55);
+    color: #fff;
+  }
 
   /* ---------- 查询全息面板 ---------- */
   #holo {
@@ -286,6 +291,8 @@
       <span class="sep">│</span>
       <button id="btn-skip" title="快进本阶段">⏩</button>
       <button id="btn-query" title="立刻查询战况">🛰</button>
+      <button id="btn-autostart" title="开机启动">🚀</button>
+      <button id="btn-hide" title="隐藏桌宠（点悬浮球或 Ctrl+Alt+H 召回）">🫥</button>
       <button class="quit" id="btn-quit" title="下班（退出）">✕</button>
     </div>
 
