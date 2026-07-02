@@ -1,0 +1,44 @@
+{
+  "name": "mxifund-pet",
+  "version": "1.0.0",
+  "description": "mxifund 模型一组研究员的一天 —— 干凯读桌面宠物",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win"
+  },
+  "author": "mxifund 模型一组",
+  "license": "MIT",
+  "build": {
+    "appId": "com.mxifund.pet",
+    "productName": "mxifund-pet",
+    "directories": {
+      "output": "dist"
+    },
+    "asar": false,
+    "files": [
+      "src/**/*",
+      "assets/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        "nsis",
+        "zip"
+      ]
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "artifactName": "${productName}-Setup-${version}.${ext}"
+    }
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^26.15.3"
+  },
+  "dependencies": {
+    "@pixiv/three-vrm": "^3.5.4",
+    "three": "^0.185.1"
+  }
+}

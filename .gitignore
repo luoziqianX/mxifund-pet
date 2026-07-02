@@ -1,0 +1,10 @@
+node_modules/
+tools/node/
+tools/git/
+tools/gh/
+tools/dl/
+dist/
+shots/
+*.zip
+*.log
+.DS_Store
