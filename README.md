@@ -19,15 +19,26 @@
 - 干翻概率每次查询 1%（`src/js/config.js` 里 `winRate` 可改）。
 - 天数、体力、凯读状态存在 localStorage，重启接着数。
 
-## 启动
+## 下载安装（推荐）
 
-双击 **启动桌宠.bat** 即可（项目自带便携版 Node + Electron，无需安装任何环境）。
+去 [Releases](https://github.com/luoziqianX/mxifund-pet/releases) 下载：
 
-命令行方式：
+- `mxifund-pet-Setup-x.x.x.exe` —— 一键安装版
+- `mxifund-pet-x.x.x-win.zip` —— 免安装便携版，解压后运行 `mxifund-pet.exe`
+
+## 从源码启动
 
 ```powershell
-$env:Path = "$PWD\tools\node;$env:Path"
+npm install
 npm start
+```
+
+也可以双击 **启动桌宠.bat**（使用本地 node_modules 里的 Electron）。
+
+## 打包 exe
+
+```powershell
+npm run dist   # 产物在 dist/：NSIS 安装包 + 便携 zip
 ```
 
 ## 玩法 / 交互
