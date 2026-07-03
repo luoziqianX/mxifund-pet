@@ -19,7 +19,15 @@ if (!isElectron) {
 
 const $ = id => document.getElementById(id);
 const rand = (a, b) => a + Math.random() * (b - a);
-const pick = arr => arr[Math.floor(Math.random() * arr.length)];
+// 随机取台词，但不和上一条重复（台词库大了以后连击同一句很出戏）
+const _lastPick = new WeakMap();
+const pick = arr => {
+  if (arr.length < 2) return arr[0];
+  let v;
+  do { v = arr[Math.floor(Math.random() * arr.length)]; } while (v === _lastPick.get(arr));
+  _lastPick.set(arr, v);
+  return v;
+};
 
 // ============ 渲染器 / 相机 ============
 const canvas = $('three-canvas');
@@ -195,26 +203,37 @@ function poseQueryAtDais() {
 }
 
 // ============ 全息查询面板 ============
-const SCAN_TEXTS = [
-  '> ping kendallsquarecap.com',
+// 头尾固定，中间每次从梗池里随机抽 3 条
+const SCAN_MID_POOL = [
   '> 扫描对方 alpha 信号…',
   '> 解密持仓数据流…',
   '> 对比夏普 / 回撤 / 胜率…',
-  '> 结算今日战况…',
+  '> 检测到大量祖传因子…',
+  '> 对方咖啡浓度：严重超标',
+  '> 对方显卡：也在燃烧',
+  '> 窃听晨会内容…全是黑话',
+  '> 分析对方回测：也过拟合了',
+  '> 检索对方招聘页：还在扩张(可恶)',
+  '> 干扰对方随机种子…',
 ];
+function scanTexts() {
+  const pool = [...SCAN_MID_POOL].sort(() => Math.random() - 0.5).slice(0, 3);
+  return ['> ping kendallsquarecap.com', ...pool, '> 结算今日战况…'];
+}
 async function runQueryPanel() {
   world.queryActive = true;
   holo.classList.add('show');
   verdict.classList.remove('show');
   scanFill.style.width = '0%';
   scanLog.innerHTML = '';
+  const texts = scanTexts();
   const t0 = performance.now();
   let li = 0;
   while (performance.now() - t0 < CONFIG.queryMs) {
     const p = Math.min(100, ((performance.now() - t0) / CONFIG.queryMs) * 100);
     scanFill.style.width = p + '%';
-    if (li < SCAN_TEXTS.length && p > (li + 0.5) * (100 / SCAN_TEXTS.length)) {
-      scanLog.innerHTML += SCAN_TEXTS[li++] + '<br>';
+    if (li < texts.length && p > (li + 0.5) * (100 / texts.length)) {
+      scanLog.innerHTML += texts[li++] + '<br>';
     }
     if (await wait(60)) break;
   }
@@ -439,7 +458,7 @@ window.addEventListener('mousedown', ev => {
   document.getElementById('stage').appendChild(h);
   setTimeout(() => h.remove(), 1200);
   const state = $('hud-state').textContent;
-  if (state === '躺') say('唔…让我再睡会…');
+  if (state === '躺') say(pick(LINES.sleepPoke));
   else say(pick(LINES.poke));
 });
 
@@ -579,7 +598,7 @@ function tableau(tab) {
       poseQueryAtDais();
       holo.classList.add('show');
       scanFill.style.width = '62%';
-      scanLog.innerHTML = SCAN_TEXTS.slice(0, 3).join('<br>');
+      scanLog.innerHTML = scanTexts().slice(0, 3).join('<br>');
       break;
     case 'celebrate':
       char.teleport(S.query, 0.42); char.face(0); char.setPose('celebrate');
