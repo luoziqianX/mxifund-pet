@@ -139,8 +139,9 @@ const TUNE = {
   // 髋骨节点恒定在根上方 0.97：座垫顶 0.45 + 半个骨盆厚 => sitY ≈ 0.55-0.97
   sitY: -0.42, sitZ: 0.24,
   podX: -5.74, podY: 0.22, podTilt: 0.22, podYaw: -Math.PI / 2,
-  loungeX: 4.35, lgAnchorY: 0.47, lgAnchorZ: -0.44, loungePitch: -0.62,
-  lgThigh: 0.88, lgKnee: -0.25, lgFoot: -0.2,
+  // 沙滩椅：躯干俯仰匹配椅背倾角(~0.6rad)，髋部锚到座面后缘上方
+  loungeX: 4.35, lgAnchorY: 0.50, lgAnchorZ: -0.16, loungePitch: -0.62,
+  lgThigh: 0.92, lgKnee: -0.18, lgFoot: -0.15,
 };
 // 调试：URL 参数可覆盖任意 TUNE 值，如 ?tab=sleep&podX=-5.4
 {
@@ -166,7 +167,7 @@ function poseSleepInPod() {
   setTimeout(() => char.settleHair(), 1600);
 }
 function poseLoungeChair() {
-  // 躺姿细节由 TUNE 驱动；落位交给髋部锚点对齐
+  // 躺姿细节由 TUNE 驱动；落位靠髋部锚点对齐到椅面
   const b = POSES.lounge.bones;
   b.spine = { x: 0.05 };
   b.neck = { x: -0.05 };
@@ -180,6 +181,8 @@ function poseLoungeChair() {
   char.teleport(S.lounge, 0);
   char.setRootOverride({ x: TUNE.loungePitch, y: 0, order: 'YXZ' }, new THREE.Vector3(TUNE.loungeX, 0, 0));
   char.snapPose('lounge');
+  // 髋部贴到椅面靠背根部：座面顶 0.375，靠背根 z≈-0.12
+  char.alignHips(new THREE.Vector3(S.lounge, TUNE.lgAnchorY, TUNE.lgAnchorZ));
   char.alignHips(new THREE.Vector3(TUNE.loungeX, TUNE.lgAnchorY, TUNE.lgAnchorZ));
   char.lookAt(camera.position.x, camera.position.y, camera.position.z);
 }
@@ -476,6 +479,8 @@ async function refreshAutostart() {
   autoOn = await window.petAPI.getAutostart();
   paintAutostart();
 }
+// 托盘菜单里切换开机启动时，同步 HUD 按钮状态
+window.petAPI?.onAutostartChanged?.(on => { autoOn = on; paintAutostart(); });
 btnAuto.addEventListener('click', () => {
   if (!isElectron) { toast('预览模式改不了开机启动'); return; }
   autoOn = !autoOn;
@@ -648,6 +653,15 @@ async function main() {
   try {
     await char.load(new URL('../../assets/model.vrm', import.meta.url).href);
     char.addGroundCollider(scene);
+    // 躺椅椅面/椅背碰撞球：防止双马尾和裙摆穿透椅子
+    {
+      const LX = S.lounge, seat = [], back = [];
+      for (const sx of [-0.16, 0.16]) {
+        for (const sz of [0.05, 0.35, 0.65]) seat.push({ pos: [LX + sx, 0.20, sz], r: 0.17 });
+        for (const [by, bz] of [[0.46, -0.46], [0.62, -0.56], [0.78, -0.68]]) back.push({ pos: [LX + sx, by, bz], r: 0.13 });
+      }
+      char.addSphereColliders(scene, [...seat, ...back]);
+    }
   } catch (e) {
     console.error('VRM 加载失败', e);
     say('模型加载失败：' + e.message, 10000);

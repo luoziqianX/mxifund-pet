@@ -1,7 +1,7 @@
 // VRM 少女角色：加载 + 程序化姿势/动画引擎
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { VRMLoaderPlugin, VRMUtils, VRMSpringBoneCollider, VRMSpringBoneColliderShapePlane } from '@pixiv/three-vrm';
+import { VRMLoaderPlugin, VRMUtils, VRMSpringBoneCollider, VRMSpringBoneColliderShapePlane, VRMSpringBoneColliderShapeSphere } from '@pixiv/three-vrm';
 
 // 模型朝向补偿：如果截图发现小人背对镜头，把它改成 Math.PI
 const FACING_OFFSET = 0;
@@ -299,6 +299,23 @@ export class Character {
     } catch (e) {
       console.warn('地面碰撞体不可用：', e.message);
     }
+  }
+
+  // 场景静态球碰撞体（如躺椅椅面/椅背），防止长发穿过家具
+  addSphereColliders(parent, spheres) {
+    const mgr = this.vrm?.springBoneManager;
+    if (!mgr || !VRMSpringBoneColliderShapeSphere) return;
+    const group = { colliders: [], name: 'furniture' };
+    for (const s of spheres) {
+      const shape = new VRMSpringBoneColliderShapeSphere({
+        offset: new THREE.Vector3(...s.pos),
+        radius: s.r,
+      });
+      const collider = new VRMSpringBoneCollider(shape);
+      parent.add(collider);
+      group.colliders.push(collider);
+    }
+    for (const joint of mgr.joints) joint.colliderGroups.push(group);
   }
 
   // 手持物挂到手骨骼

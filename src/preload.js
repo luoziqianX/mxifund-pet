@@ -25,6 +25,9 @@ contextBridge.exposeInMainWorld('petAPI', {
   onCursor(cb) {
     ipcRenderer.on('pet:cursor', (_e, x, y) => cb(x, y));
   },
+  onAutostartChanged(cb) {
+    ipcRenderer.on('pet:autostart-changed', (_e, on) => cb(on));
+  },
   // ---- 悬浮球专用 ----
   ballMove(x, y) {
     ipcRenderer.send('ball:move', x, y);

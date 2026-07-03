@@ -21,6 +21,7 @@
     transition: transform .18s ease;
   }
   #ball:hover { transform: scale(1.12); }
+  #ball.pressed { transform: scale(0.92); }
   #ball.dragging { cursor: grabbing; animation: none; transform: scale(1.06); }
   @keyframes bob { 0%,100% { translate: 0 -2px; } 50% { translate: 0 2px; } }
 
@@ -68,9 +69,12 @@
   </div>
 
 <script>
-  // 拖动：pointer capture 跟随鼠标移动窗口；位移极小视为点击 => 召回桌宠
+  // 拖动 vs 点击：真人点击会漂移几个像素，判定必须宽松——
+  // 位移 <10px 或按压 <300ms 都算点击（召回桌宠），只有明确拖远才算拖动
   const ball = document.getElementById('ball');
   const KEY = 'mxpet-ball-pos';
+  const CLICK_DIST = 10;
+  const CLICK_MS = 300;
 
   // 恢复上次拖放的位置
   try {
@@ -79,31 +83,49 @@
   } catch { /* 首次启动无记录 */ }
 
   let drag = null;
-  ball.addEventListener('pointerdown', ev => {
+  function endDrag(ev, cancelled) {
+    if (!drag) return;
+    const d = drag; drag = null;
+    ball.classList.remove('dragging', 'pressed');
+    if (cancelled) { console.warn('BALL pointercancel'); return; }
+    const dist = Math.hypot(ev.screenX - d.startX, ev.screenY - d.startY);
+    const dt = performance.now() - d.t0;
+    console.warn(`BALL up dist=${dist.toFixed(1)} dt=${dt.toFixed(0)} moved=${d.moved}`);
+    if (dist < CLICK_DIST || dt < CLICK_MS) {
+      window.petAPI.ballRestore();
+    } else if (d.moved) {
+      localStorage.setItem(KEY, JSON.stringify({ x: window.screenX, y: window.screenY }));
+    }
+  }
+  // 监听挂 window（capture）而不是只挂球体：按住拖到球外再松手也能收到 up
+  window.addEventListener('pointerdown', ev => {
     drag = {
       offX: ev.screenX - window.screenX,
       offY: ev.screenY - window.screenY,
       startX: ev.screenX, startY: ev.screenY,
+      t0: performance.now(),
       moved: false,
     };
-    ball.setPointerCapture(ev.pointerId);
-    ball.classList.add('dragging');
-  });
-  ball.addEventListener('pointermove', ev => {
+    try { ball.setPointerCapture(ev.pointerId); } catch { /* 球外按下时可忽略 */ }
+    ball.classList.add('pressed');
+    console.warn('BALL down @' + ev.screenX + ',' + ev.screenY);
+  }, { capture: true });
+  window.addEventListener('pointermove', ev => {
     if (!drag) return;
-    if (Math.hypot(ev.screenX - drag.startX, ev.screenY - drag.startY) > 4) drag.moved = true;
-    if (drag.moved) window.petAPI.ballMove(ev.screenX - drag.offX, ev.screenY - drag.offY);
-  });
-  ball.addEventListener('pointerup', ev => {
-    if (!drag) return;
-    ball.classList.remove('dragging');
-    if (drag.moved) {
-      localStorage.setItem(KEY, JSON.stringify({ x: window.screenX, y: window.screenY }));
-    } else {
-      window.petAPI.ballRestore();
+    if (!drag.moved && Math.hypot(ev.screenX - drag.startX, ev.screenY - drag.startY) > CLICK_DIST) {
+      drag.moved = true;
+      ball.classList.add('dragging');
+      ball.classList.remove('pressed');
     }
-    drag = null;
-  });
+    if (drag.moved) window.petAPI.ballMove(ev.screenX - drag.offX, ev.screenY - drag.offY);
+  }, { capture: true });
+  window.addEventListener('pointerup', ev => endDrag(ev, false), { capture: true });
+  window.addEventListener('pointercancel', ev => endDrag(ev, true), { capture: true });
+  // 兜底：万一 up 事件丢失，鼠标松开后的下一次 down 也按点击处理
+  window.addEventListener('mouseup', ev => { if (drag) endDrag(ev, false); }, { capture: true });
+  // 多重兜底：双击 / 右键都能召回
+  window.addEventListener('dblclick', () => window.petAPI.ballRestore(), { capture: true });
+  window.addEventListener('contextmenu', ev => { ev.preventDefault(); window.petAPI.ballRestore(); });
 </script>
 </body>
 </html>

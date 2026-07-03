@@ -1,18 +1,37 @@
-const { app, BrowserWindow, ipcMain, screen, globalShortcut, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, globalShortcut, shell, Tray, Menu } = require('electron');
 const path = require('path');
+const fs = require('fs');
 
 let win = null;
 let ball = null;
+let tray = null;
+let petHidden = false;
 const WIN_HEIGHT = 440;
 const BALL_SIZE = 72;
+const DIAG = process.argv.includes('--diag');
 
 // 防止开机自启 + 手动双开出现两只桌宠
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) app.quit();
 
+// ---------- 设置持久化（显示器选择等） ----------
+let settings = {};
+const settingsFile = () => path.join(app.getPath('userData'), 'settings.json');
+function loadSettings() {
+  try { settings = JSON.parse(fs.readFileSync(settingsFile(), 'utf8')); } catch { settings = {}; }
+}
+function saveSettings() {
+  try { fs.writeFileSync(settingsFile(), JSON.stringify(settings)); } catch (e) { console.warn('保存设置失败:', e.message); }
+}
+
+// 桌宠所在显示器（默认主屏；记住的屏被拔掉后自动回主屏）
+function targetDisplay() {
+  return screen.getAllDisplays().find(d => d.id === settings.displayId) || screen.getPrimaryDisplay();
+}
+
 function placeWindow() {
   if (!win) return;
-  const { workArea } = screen.getPrimaryDisplay();
+  const { workArea } = targetDisplay();
   win.setBounds({
     x: workArea.x,
     y: workArea.y + workArea.height - WIN_HEIGHT,
@@ -47,12 +66,12 @@ function createWindow() {
 
   // 桌宠层级：盖在普通窗口上方，但不挡住开始菜单等系统层
   win.setAlwaysOnTop(true, 'screen-saver');
-  // 默认整窗鼠标穿透，renderer 里悬停到可交互元素时再打开
+  // 默认整窗鼠标穿透，悬停到可交互元素时再打开
   win.setIgnoreMouseEvents(true, { forward: true });
 
   placeWindow();
   win.loadFile(path.join(__dirname, 'index.html'), {
-    query: process.argv.includes('--diag') ? { diag: '1' } : {},
+    query: DIAG ? { diag: '1' } : {},
   });
 
   if (process.argv.includes('--devtools')) {
@@ -78,7 +97,6 @@ function createBall() {
     hasShadow: false,
     focusable: false,
     fullscreenable: false,
-    show: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -87,12 +105,25 @@ function createBall() {
     },
   });
   ball.setAlwaysOnTop(true, 'screen-saver');
-  const { workArea } = screen.getPrimaryDisplay();
+  // 和主窗一样：不用 hide/show（会永久拆掉输入通道），用透明度+穿透来隐藏
+  ball.setOpacity(0);
+  ball.setIgnoreMouseEvents(true);
+  moveBallToEdge();
+  ball.loadFile(path.join(__dirname, 'ball.html'));
+  // 球的渲染进程若意外挂掉就自动复活，保证召回入口永远可用
+  ball.webContents.on('render-process-gone', () => ball.webContents.reload());
+  ball.webContents.on('console-message', (_e, level, message) => {
+    if (level >= 2) console.log('[ball]', message);
+  });
+}
+
+function moveBallToEdge() {
+  if (!ball) return;
+  const { workArea } = targetDisplay();
   ball.setPosition(
     workArea.x + workArea.width - BALL_SIZE - 14,
     workArea.y + Math.round(workArea.height * 0.55)
   );
-  ball.loadFile(path.join(__dirname, 'ball.html'));
 }
 
 function clampToWorkArea(x, y) {
@@ -103,22 +134,43 @@ function clampToWorkArea(x, y) {
   };
 }
 
+// ---------- 隐藏 / 召回 ----------
+// 关键：绝不调用 win.hide()。穿透窗口被 hide/show 一次后，Windows 会把
+// forward:true 依赖的低级鼠标钩子摘掉且不恢复，之后按钮永久失灵。
+// 改用"透明度 0 + 强制穿透"来隐藏：窗口对系统始终存活，输入链路不会被拆。
+function showBall() {
+  if (!ball) return;
+  ball.setOpacity(1);
+  ball.setIgnoreMouseEvents(false);
+  ball.moveTop();
+}
+function hideBall() {
+  if (!ball) return;
+  ball.setOpacity(0);
+  ball.setIgnoreMouseEvents(true);
+}
+
 function hidePet() {
-  if (!win || !win.isVisible()) return;
-  win.hide();
-  ball?.show();
+  if (!win || petHidden) return;
+  petHidden = true;
+  win.setOpacity(0);
+  win.setIgnoreMouseEvents(true, { forward: true });
+  showBall();
+  rebuildTray();
+  if (DIAG) console.log('PET_HIDDEN opacity=' + win.getOpacity() + ' ballOpacity=' + ball?.getOpacity());
 }
 function showPet() {
-  if (!win || win.isVisible()) return;
+  if (!win || petHidden === false) return;
+  petHidden = false;
   placeWindow();
-  win.show();
+  win.setOpacity(1);
   win.setAlwaysOnTop(true, 'screen-saver');
-  // Windows 上 hide/show 之后 forward:true 的鼠标转发会失效，必须重挂，
-  // 否则 renderer 收不到 mousemove，HUD/小人永远无法恢复交互
   win.setIgnoreMouseEvents(true, { forward: true });
-  // 让 renderer 把本地 interactive 状态复位，与主进程保持一致
+  // 让 renderer 复位本地 interactive 状态，与主进程保持一致
   win.webContents.send('pet:restored');
-  ball?.hide();
+  hideBall();
+  rebuildTray();
+  if (DIAG) console.log('PET_SHOWN opacity=' + win.getOpacity() + ' ballOpacity=' + ball?.getOpacity());
 }
 
 // ---------- 开机启动 ----------
@@ -132,6 +184,8 @@ function getAutostart() {
 }
 function setAutostart(on) {
   app.setLoginItemSettings({ ...loginArgs(), openAtLogin: !!on });
+  win?.webContents.send('pet:autostart-changed', !!on);
+  rebuildTray();
 }
 
 // ---------- 桌面快捷方式 ----------
@@ -143,24 +197,83 @@ function createDesktopShortcut() {
   return shell.writeShortcutLink(lnk, 'create', { ...opts, description: 'mxifund 干凯读桌宠' });
 }
 
+// ---------- 系统托盘（任务栏右下角） ----------
+function setDisplay(id) {
+  settings.displayId = id;
+  saveSettings();
+  placeWindow();
+  moveBallToEdge();
+  rebuildTray();
+}
+
+function rebuildTray() {
+  if (!tray) return;
+  const displays = screen.getAllDisplays();
+  const cur = targetDisplay();
+  const primaryId = screen.getPrimaryDisplay().id;
+  tray.setContextMenu(Menu.buildFromTemplate([
+    {
+      label: petHidden ? '召回桌宠' : '隐藏桌宠（缩成悬浮球）',
+      click: () => (petHidden ? showPet() : hidePet()),
+    },
+    { type: 'separator' },
+    {
+      label: '桌宠所在显示器',
+      submenu: displays.map((d, i) => ({
+        label: `显示器 ${i + 1}：${d.size.width}×${d.size.height}${d.id === primaryId ? '（主屏）' : ''}`,
+        type: 'radio',
+        checked: d.id === cur.id,
+        click: () => setDisplay(d.id),
+      })),
+    },
+    { type: 'separator' },
+    {
+      label: '开机启动',
+      type: 'checkbox',
+      checked: getAutostart(),
+      click: mi => setAutostart(mi.checked),
+    },
+    { label: '创建桌面快捷方式', click: () => createDesktopShortcut() },
+    { type: 'separator' },
+    { label: '退出', click: () => app.quit() },
+  ]));
+}
+
+async function createTray() {
+  try {
+    const icon = await app.getFileIcon(process.execPath, { size: 'small' });
+    tray = new Tray(icon);
+    tray.setToolTip('mxifund 干凯读桌宠（点击隐藏/召回）');
+    tray.on('click', () => (petHidden ? showPet() : hidePet()));
+    rebuildTray();
+    if (DIAG || process.argv.includes('--test-display')) console.log('TRAY_READY');
+  } catch (e) {
+    console.warn('托盘创建失败:', e.message);
+  }
+}
+
 app.whenReady().then(() => {
+  loadSettings();
   createWindow();
   createBall();
-  screen.on('display-metrics-changed', placeWindow);
-  screen.on('primary-display-changed', placeWindow);
+  createTray();
+  screen.on('display-metrics-changed', () => { placeWindow(); rebuildTray(); });
+  screen.on('primary-display-changed', () => { placeWindow(); rebuildTray(); });
+  screen.on('display-added', () => { placeWindow(); rebuildTray(); });
+  screen.on('display-removed', () => { placeWindow(); moveBallToEdge(); rebuildTray(); });
 
   // 全局热键兜底：悬浮球被挡住/拖丢时也能一键隐藏或召回
-  globalShortcut.register('Control+Alt+H', () => {
-    if (win?.isVisible()) hidePet(); else showPet();
+  const hotkeyOK = globalShortcut.register('Control+Alt+H', () => {
+    if (DIAG) console.log('HOTKEY_FIRED');
+    if (petHidden) showPet(); else hidePet();
   });
+  if (DIAG) console.log('HOTKEY_REGISTERED=' + hotkeyOK);
 
-  // 悬停检测不依赖 setIgnoreMouseEvents 的 forward 转发——
-  // 那个实现基于 Win32 低级鼠标钩子，主进程繁忙时会被系统摘除且不再恢复
-  // （表现为隐藏/召回等重操作后 HUD 再也点不动）。
-  // 改为主进程轮询光标推给 renderer 做命中检测，稳定可靠。
+  // 悬停检测不依赖 setIgnoreMouseEvents 的 forward 转发（其底层鼠标钩子不可靠），
+  // 由主进程轮询光标推给 renderer 做命中检测
   let wasInside = false;
   setInterval(() => {
-    if (!win || win.isDestroyed() || !win.isVisible()) return;
+    if (!win || win.isDestroyed() || petHidden) return;
     const p = screen.getCursorScreenPoint();
     const b = win.getBounds();
     const x = p.x - b.x, y = p.y - b.y;
@@ -177,11 +290,12 @@ app.whenReady().then(() => {
       setTimeout(async () => {
         try {
           const img = await ball.webContents.capturePage();
-          require('fs').writeFileSync(path.join(app.getAppPath(), 'shots', 'ball.png'), img.toPNG());
-          console.log('BALL_SHOT_SAVED', JSON.stringify(ball.getBounds()), 'petVisible=' + win.isVisible());
+          fs.writeFileSync(path.join(app.getAppPath(), 'shots', 'ball.png'), img.toPNG());
+          console.log('BALL_SHOT_SAVED', JSON.stringify(ball.getBounds()),
+            'petOpacity=' + win.getOpacity(), 'ballOpacity=' + ball.getOpacity());
         } catch (e) { console.log('BALL_SHOT_FAIL', e.message); }
         showPet();
-        console.log('AFTER_RESTORE petVisible=' + win.isVisible() + ' ballVisible=' + ball.isVisible());
+        console.log('AFTER_RESTORE petOpacity=' + win.getOpacity() + ' ballOpacity=' + ball.getOpacity());
         app.quit();
       }, 1500);
     }, 3500);
@@ -213,6 +327,21 @@ app.whenReady().then(() => {
       app.quit();
     }, 3500);
   }
+  // 显示器枚举与选择流程自检
+  if (process.argv.includes('--test-display')) {
+    setTimeout(() => {
+      const ds = screen.getAllDisplays();
+      console.log('DISPLAYS', JSON.stringify(ds.map(d => ({ id: d.id, size: d.size, wa: d.workArea }))));
+      console.log('TARGET_BEFORE', targetDisplay().id, JSON.stringify(win.getBounds()));
+      for (const d of ds) {
+        setDisplay(d.id);
+        console.log('PLACED_ON', d.id, JSON.stringify(win.getBounds()), 'ball=' + JSON.stringify(ball.getBounds()));
+      }
+      setDisplay(ds[0].id);
+      console.log('SETTINGS_FILE', settingsFile(), fs.readFileSync(settingsFile(), 'utf8'));
+      app.quit();
+    }, 3000);
+  }
   // 常驻运行，周期打印 HUD 按钮屏幕坐标（状态文字变宽会挪动按钮），供鼠标注入测试
   if (process.argv.includes('--log-hud-rect')) {
     setInterval(async () => {
@@ -243,13 +372,13 @@ app.on('second-instance', () => showPet());
 app.on('will-quit', () => globalShortcut.unregisterAll());
 
 ipcMain.on('pet:set-interactive', (_e, interactive) => {
-  if (!win) return;
+  if (!win || petHidden) return;
   win.setIgnoreMouseEvents(!interactive, { forward: true });
   if (process.argv.includes('--log-hud-rect')) console.log('SET_INTERACTIVE', interactive);
 });
 
 ipcMain.on('pet:hide', () => {
-  if (process.argv.includes('--diag')) console.log('MAIN_GOT_HIDE');
+  if (DIAG) console.log('MAIN_GOT_HIDE');
   hidePet();
 });
 ipcMain.on('pet:quit', () => app.quit());
@@ -263,6 +392,9 @@ ipcMain.on('ball:move', (_e, x, y) => {
   const p = clampToWorkArea(x, y);
   ball.setPosition(p.x, p.y);
 });
-ipcMain.on('ball:restore', showPet);
+ipcMain.on('ball:restore', () => {
+  if (DIAG) console.log('BALL_RESTORE_CLICKED');
+  showPet();
+});
 
 app.on('window-all-closed', () => app.quit());
